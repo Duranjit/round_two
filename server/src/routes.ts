@@ -1,8 +1,13 @@
 import { Router, Request, Response } from 'express';
 import { getDbClient } from './db';
-import { simulateHeavyEncryption } from './utils/crypto';
+import { WorkerPool } from './workers/WorkerPool';
+import path from 'path';
 
 const router = Router();
+
+// Initialize worker pool for encryption tasks
+const workerScript = path.resolve(__dirname, 'workers/crypto.worker.js');
+const encryptionWorkerPool = new WorkerPool(workerScript, 4);
 
 // --- INVENTORY MANAGEMENT ---
 
@@ -60,16 +65,24 @@ router.post('/reserve-dose', async (req: Request, res: Response) => {
 // --- VITALS INGESTION ---
 
 // POST /ingest-vitals
-// Accepts raw vitals. Performs heavy encryption. Returns success.
-router.post('/ingest-vitals', (req: Request, res: Response) => {
+// Accepts raw vitals. Performs heavy encryption asynchronously using worker threads.
+router.post('/ingest-vitals', async (req: Request, res: Response) => {
     const { vitals } = req.body;
 
-    // Simulate heavy encryption (CPU bound)
-    simulateHeavyEncryption();
+    try {
+        // Offload heavy encryption to worker thread (non-blocking)
+        await encryptionWorkerPool.runTask({ vitals });
 
     // In a real app, we would save the encrypted vitals to DB here
 
-    res.json({ success: true, message: 'Vitals processed' });
+        res.json({ success: true, message: 'Vitals processed' });
+    } catch (error) {
+        console.error('Encryption error:', error);
+        res.status(500).json({
+            success: false,
+            error: 'Failed to process vitals'
+        });
+    }
 });
 
 export default router;
